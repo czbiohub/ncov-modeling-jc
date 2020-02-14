@@ -1,0 +1,82 @@
+---
+title: "phylogeny"
+author: "Lucy M. Li"
+date: "2/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+library(seqinr)
+library(dplyr)
+library(readr)
+library(lubridate)
+library(magrittr)
+library(ggplot2)
+library(ggtree)
+library(ape)
+```
+
+
+## Sequences
+
+```{r load_seq_data}
+data_dir <- "../data"
+date_id_str <- as.Date("2020-02-12")
+date_id <- format(date_id_str, "%Y%m%d")
+gb_fasta <- paste0("gb_", date_id, "_nCov_genomes.fasta")
+gisaid_fasta <- paste0("gisaid_", date_id, ".fasta")
+gb_metadata <- paste0("gb_", date_id, "_metadata.tsv")
+gisaid_metadata <- paste0("gisaid_", date_id, "_metadata.tsv")
+
+raw_gb_seq <- read.fasta(file.path(data_dir, gb_fasta))
+raw_gisaid_seq <- read.fasta(file.path(data_dir, gisaid_fasta))
+
+gb_metadata <- read_tsv(file.path(data_dir, gb_metadata))
+gisaid_metadata <- read_tsv(file.path(data_dir, gisaid_metadata))
+```
+
+In total, there are `r length(raw_gb_seq)` and `r length(raw_gisaid_seq)` whole genome sequences available on NCBI and GISAID, respectively, as of `r format(date_id_str, "%b %d, %Y")`. These range from `r sapply(c(raw_gb_seq, raw_gisaid_seq), nchar) %>% range() %>% formatC(big.mark=",") %>% paste(collapse=" to ")` bases in length.
+
+## Alignment
+
+```{r}
+align_dir <- "../alignment"
+align_input_file <- paste0("input_fasta_", date_id, ".fasta")
+align_output_file <- paste0("msa_", date_id, ".fasta")
+write.fasta(c(raw_gb_seq, raw_gisaid_seq),
+            names=c(names(raw_gb_seq), names(raw_gisaid_seq)),
+            file.out=file.path(align_dir, align_input_file))
+system(paste0("muscle -in ", file.path(align_dir, align_input_file),
+              " -out ", file.path(align_dir, align_output_file)))
+```
+
+## Phylogeny
+
+```{r}
+tree_dir <- "../tree"
+tree_input_file <- paste0("tree_", date_id, ".fasta")
+aln <- read.fasta(file.path(align_dir, align_output_file), forceDNAtolower = FALSE)
+selected_aln <- names(lapply(aln, `%in%`, c("N", "-")) %>% sapply(mean) %>% `[`(., .<=0.1))
+write.fasta(aln[selected_aln], selected_aln, file.out=file.path(tree_dir, tree_input_file))
+```
+
+```{r}
+try(file.remove(file.path(tree_dir, paste0("tree_", date_id))))
+paste0("~/anaconda3/bin/iqtree -s ", 
+       file.path(tree_dir, tree_input_file), 
+       " -nt AUTO -pre ",
+       gsub(".fasta", "", file.path(tree_dir, tree_input_file))) %>%
+  system()
+```
+
+```{r load_tree, fig.width=3, fig.height=4}
+tree_file <- gsub(".fasta", ".treefile", file.path(tree_dir, tree_input_file))
+tr <- read.tree(tree_file)
+outgroup_tips <- c(filter(gisaid_metadata, grepl("/bat/", gisaid_metadata$virus_name))$acc %>% unlist(), grep("OUTGROUP", tr$tip.label, value=TRUE))
+rooted_tr <- root.phylo(tr, outgroup_tips, resolve.root=TRUE) %>% drop.tip(., outgroup_tips) %>% drop.tip(., "EPI_ISL_406592")
+tip_dates <- c(gb_metadata$collection_date, gisaid_metadata$collection_date)[sapply(word(rooted_tr$tip.label, sep=fixed(".")), grep, c(gb_metadata$acc, gisaid_metadata$acc))]
+rooted_tr$tip.label %<>% paste(., tip_dates)
+plot(rooted_tr, cex=.3)
+```
+
