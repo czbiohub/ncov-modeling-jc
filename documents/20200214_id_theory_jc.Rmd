@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 library(magrittr)
 library(tidyr)
+library(dplyr)
 ```
 
 # Background
@@ -133,6 +134,14 @@ $$
 R_0 = \rho (FV^{-1}).
 $$
 
+$$
+\begin{aligned}
+F = \begin{pmatrix} \beta & 0 \\ 0 & 0 \end{pmatrix}\\
+V = \begin{pmatrix} 0 & \alpha \\ \gamma & -\alpha \end{pmatrix}\\
+R_0 = \frac{\beta}{\gamma}
+\end{aligned}
+$$
+
 
 Unfortunately the authors of [Read2020.01.23.20018549] did not provide details of the metapopulation model they used. One potential formulation is:
 
@@ -167,7 +176,34 @@ Stochastic versions of compartmental models can better capture random effects, w
 In the case of the second paper [@qun2020nejm], the stochastic renewal model they used only directly modeled the number of individuals in the 'Infectious' class.
 
 $$
+\begin{aligned}
+I(t) &= \int_0^\infty I(t-\tau)\beta(\tau) d\tau \\
+R &= \int\beta(\tau) d \tau
+\end{aligned}
+$$
 
+We can define a generation time probability distribution $\omega(\tau):$
+
+$$\int\omega (\tau) d\tau = \frac{1}{R}\int\beta(\tau) d\tau$$
+
+if we assume the rate of transmission per unit of time is constant. We can re-write the equation for $I(t)$ above:
+
+$$
+\begin{aligned}
+\beta (\tau) &= R\cdot \omega(\tau) \\
+I(t) &= R \int_0^\infty I(t-\tau)\omega(\tau) d\tau \\
+R &= \frac{I(t)}{\int_0^{\infty} I(t-\tau) \omega (\tau) d\tau}
+\end{aligned}
+$$
+
+During the early stages of an epidemic, number of infected individuals grows exponentially. We can parameterize the renewal equation above using an exponential model and calculate $R_0$ as:
+
+$$
+\begin{aligned}
+I(t) &= I(t_0) \exp^{r(t-t_0)} \\
+\textrm{Let }I(t_0) &= 1 \\
+R_0 &= \frac{1}{\int_0^{\infty}e^{-rt}\omega({\tau}) d\tau}
+\end{aligned}
 $$
 
 
@@ -176,7 +212,14 @@ $$
 
 In both cases, the models were fit to incidence time series (i.e. the epi curve). This means the set of parameters values that best describes the observed time series.
 
-
+```{r simdata}
+simdata <- data.frame(time=seq(0, 50)) %>% mutate(data=exp(.1 * time) %>% sapply(function (x) rpois(1, x)) %>% `/`(500))
+ggplot(out %>% pivot_longer(-time, names_to="Compartment")) +
+  theme_bw() +
+  geom_line(aes(x=time, y=value, color=Compartment)) +
+  geom_point(data=simdata, aes(x=time, y=data)) +
+  ylab("Proportion of population")
+```
 
 ## Sources of uncertainty in parameter estimates and heterogeneity in transmission.
 
