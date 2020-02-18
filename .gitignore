@@ -3,3 +3,5 @@
 .RData
 .Ruserdata
 .DS_Store
+data/GISAID
+data/gisaid_cov2020_acknowledgement_table.xls
