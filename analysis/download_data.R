@@ -16,10 +16,8 @@ curr_date <- gsub("-", "", as.character(Sys.Date()))
 
 coronavirus_taxid <- 2697049
 
-outgroup <- "MG772933.1"
 id_search <- entrez_search(db="nuccore", term=paste0('txid', coronavirus_taxid, '[Organism:noexp] AND ("20000"[SLEN] : "35000"[SLEN])'))$ids
-seq_str <- entrez_fetch(db="nuccore", id=c(id_search, outgroup), rettype="fasta") %>% 
-  gsub(outgroup, paste0(outgroup, "OUTGROUP"), .) %>%
+seq_str <- entrez_fetch(db="nuccore", id=id_search, rettype="fasta") %>% 
   strsplit("\n") %>%
   `[[`(1)
 seq_name_pos <- grep(">", seq_str)
@@ -29,7 +27,7 @@ cat(seq_str, sep="\n", file=paste0("../data/gb_", curr_date, "_nCov_genomes.fast
 
 # Download metadata associated with Genbank sequences ---------------------
 
-gb <- efetch(c(id_search, outgroup), db="nuccore", rettype="gb", retmode="text")$content
+gb <- efetch(id_search, db="nuccore", rettype="gb", retmode="text")$content
 gb_split <- strsplit(gb, "LOCUS       ")[[1]][-1]
 gb_line_split <- strsplit(gb_split, "\n")
 
