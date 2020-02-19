@@ -15,6 +15,8 @@ library(magrittr)
 library(ggplot2)
 library(ggtree)
 library(ape)
+library(EpiGenR)
+library(gridExtra)
 ```
 
 
@@ -22,61 +24,132 @@ library(ape)
 
 ```{r load_seq_data}
 data_dir <- "../data"
-date_id_str <- as.Date("2020-02-12")
+date_id_str <- as.Date("2020-02-18")
 date_id <- format(date_id_str, "%Y%m%d")
 gb_fasta <- paste0("gb_", date_id, "_nCov_genomes.fasta")
 gisaid_fasta <- paste0("gisaid_", date_id, ".fasta")
-gb_metadata <- paste0("gb_", date_id, "_metadata.tsv")
-gisaid_metadata <- paste0("gisaid_", date_id, "_metadata.tsv")
+cambodia_fasta <- paste0("cambodia_", date_id, ".fasta")
+gb_metadata_file <- paste0("gb_", date_id, "_metadata.tsv")
+gisaid_metadata_file <- paste0("gisaid_", date_id, "_metadata.tsv")
+cambodia_metadata_file <- paste0("cambodia_", date_id, "_metadata.tsv")
 
 raw_gb_seq <- read.fasta(file.path(data_dir, gb_fasta))
 raw_gisaid_seq <- read.fasta(file.path(data_dir, gisaid_fasta))
+raw_cambodia_seq <- read.fasta(file.path(data_dir, cambodia_fasta))
 
-gb_metadata <- read_tsv(file.path(data_dir, gb_metadata))
-gisaid_metadata <- read_tsv(file.path(data_dir, gisaid_metadata))
+gb_metadata <- read_tsv(file.path(data_dir, gb_metadata_file))
+gisaid_metadata <- read_tsv(file.path(data_dir, gisaid_metadata_file))
+cambodia_metadata <- read_tsv(file.path(data_dir, cambodia_metadata_file))
+metadata <- bind_rows(gb_metadata, gisaid_metadata, cambodia_metadata)
 ```
 
 In total, there are `r length(raw_gb_seq)` and `r length(raw_gisaid_seq)` whole genome sequences available on NCBI and GISAID, respectively, as of `r format(date_id_str, "%b %d, %Y")`. These range from `r sapply(c(raw_gb_seq, raw_gisaid_seq), nchar) %>% range() %>% formatC(big.mark=",") %>% paste(collapse=" to ")` bases in length.
 
 ## Alignment
 
-```{r}
+```{r, cache=TRUE}
 align_dir <- "../alignment"
 align_input_file <- paste0("input_fasta_", date_id, ".fasta")
 align_output_file <- paste0("msa_", date_id, ".fasta")
 write.fasta(c(raw_gb_seq, raw_gisaid_seq),
             names=c(names(raw_gb_seq), names(raw_gisaid_seq)),
             file.out=file.path(align_dir, align_input_file))
-system(paste0("muscle -in ", file.path(align_dir, align_input_file),
+system(paste0("muscle -maxiters 1 -diags1 -in ", file.path(align_dir, align_input_file),
               " -out ", file.path(align_dir, align_output_file)))
+```
+
+```{r, cache=TRUE}
+align_output_file_cambodia <- paste0("msa_", date_id, "_cambodia.fasta")
+system(paste0("muscle -profile -in1 ", file.path(align_dir, align_output_file), " -in2 ", file.path(data_dir, cambodia_fasta), 
+              " -out ", file.path(align_dir, align_output_file_cambodia)))
 ```
 
 ## Phylogeny
 
-```{r}
+```{r, cache=TRUE}
 tree_dir <- "../tree"
 tree_input_file <- paste0("tree_", date_id, ".fasta")
 aln <- read.fasta(file.path(align_dir, align_output_file), forceDNAtolower = FALSE)
 selected_aln <- names(lapply(aln, `%in%`, c("N", "-")) %>% sapply(mean) %>% `[`(., .<=0.1))
-write.fasta(aln[selected_aln], selected_aln, file.out=file.path(tree_dir, tree_input_file))
+selected_sites <- aln[selected_aln] %>% sapply(function (x) x %in% c("A", "C", "T", "G")) %>% apply(1, all) %>% which()
+write.fasta(lapply(aln[selected_aln], `[`, selected_sites), selected_aln, file.out=file.path(tree_dir, tree_input_file))
+
+tree_input_file_cambodia <- paste0("tree_", date_id, "_cambodia.fasta")
+aln_cambodia <- read.fasta(file.path(align_dir, align_output_file_cambodia), forceDNAtolower = FALSE)
+selected_aln_cambodia <- names(lapply(aln_cambodia, `%in%`, c("N", "-")) %>% sapply(mean) %>% `[`(., .<=0.1))
+selected_sites_cambodia <- aln_cambodia[selected_aln_cambodia] %>% sapply(function (x) x %in% c("A", "C", "T", "G")) %>% apply(1, all) %>% which()
+write.fasta(lapply(aln_cambodia[selected_aln_cambodia], `[`, selected_sites_cambodia), selected_aln_cambodia, file.out=file.path(tree_dir, tree_input_file_cambodia))
 ```
 
-```{r}
+```{r, cache=TRUE}
 try(file.remove(file.path(tree_dir, paste0("tree_", date_id))))
-paste0("~/anaconda3/bin/iqtree -s ", 
+tree_command <- paste0("iqtree -s ", 
        file.path(tree_dir, tree_input_file), 
        " -nt AUTO -pre ",
-       gsub(".fasta", "", file.path(tree_dir, tree_input_file))) %>%
-  system()
+       gsub(".fasta", "", file.path(tree_dir, tree_input_file)),
+       " -czb")
+tree_command_cambodia <- gsub(paste0("_", date_id), paste0("_", date_id, "_cambodia"), tree_command)
+system(tree_command, show.output.on.console=FALSE)
+system(tree_command_cambodia, show.output.on.console=FALSE)
 ```
 
-```{r load_tree, fig.width=3, fig.height=4}
+```{r load_tree, fig.width=3, fig.height=8}
+get_rooted_tree <- function (raw_tree, outgroup) {
+  rooted_tr <- root.phylo(raw_tree, outgroup, resolve.root=TRUE) %>% drop.tip(., outgroup) 
+  rooted_tr
+}
+
+rescale_by_genome_size <- function (tr, N) {
+  tr$edge.length %<>% `*`(N)
+  tr
+}
+
+prettify_tiplabels <- function (tr, metadata_table) {
+  selection <- sapply(word(tr$tip.label, sep=fixed(".")), grep, metadata_table$acc)
+  tip_dates <- metadata_table$collection_date[selection]
+  countries <- metadata_table$country[selection]
+  tr$tip.label %<>% paste(., tip_dates)
+  tr$tip.label %<>% paste(., countries)
+  tr
+}
+
+
+outgroup_tips <- c(filter(gisaid_metadata, grepl("/bat/", gisaid_metadata$virus_name))$acc %>% unlist())
+
 tree_file <- gsub(".fasta", ".treefile", file.path(tree_dir, tree_input_file))
+tree_file_cambodia <- gsub(".fasta", ".treefile", file.path(tree_dir, tree_input_file_cambodia))
+
 tr <- read.tree(tree_file)
-outgroup_tips <- c(filter(gisaid_metadata, grepl("/bat/", gisaid_metadata$virus_name))$acc %>% unlist(), grep("OUTGROUP", tr$tip.label, value=TRUE))
-rooted_tr <- root.phylo(tr, outgroup_tips, resolve.root=TRUE) %>% drop.tip(., outgroup_tips) %>% drop.tip(., "EPI_ISL_406592")
-tip_dates <- c(gb_metadata$collection_date, gisaid_metadata$collection_date)[sapply(word(rooted_tr$tip.label, sep=fixed(".")), grep, c(gb_metadata$acc, gisaid_metadata$acc))]
-rooted_tr$tip.label %<>% paste(., tip_dates)
-plot(rooted_tr, cex=.3)
+rooted_tr <- get_rooted_tree(tr, outgroup_tips) %>% 
+  rescale_by_genome_size(length(aln[[1]])) %>%
+  prettify_tiplabels(metadata)
+
+tr_cambodia <- read.tree(tree_file_cambodia)
+rooted_tr_cambodia <- get_rooted_tree(tr_cambodia, outgroup_tips) %>% 
+  rescale_by_genome_size(length(aln_cambodia[[1]])) %>%
+  prettify_tiplabels(metadata)
+
+rooted_tr_plot <- ggtree(rooted_tr) +
+  geom_tiplab(align=TRUE, size=2) +
+  xlim(0, 100) +
+  geom_treescale(width=5, x=0, y=-2)
+
+rooted_tr_cambodia_plot <- ggtree(rooted_tr_cambodia) +
+  xlim(0, 100) +
+  geom_treescale(width=5, x=0, y=-2) +
+  geom_tiplab(aes(color=grepl("Cambodia", label, ignore.case=TRUE)), align=TRUE, size=2) +
+  scale_color_manual(values=c("black", "red")) +
+  theme(legend.position="none")
+
+ggsave(file.path(tree_dir, "cambodia_covid19_tree_20200218.pdf"), 
+       arrangeGrob(rooted_tr_plot, rooted_tr_cambodia_plot, nrow=1),
+       width=10, height=15)
 ```
 
+
+```{r mutations}
+cambodia_alignment <- read.fasta(file.path(tree_dir, tree_input_file_cambodia))
+ref_select <- grep("MN908947", names(cambodia_alignment))
+dist_matrix <- read.dna(file.path(tree_dir, tree_input_file_cambodia), "fasta") %>% dist.dna("N") %>% as.matrix()
+dist_matrix[ref_select, -1]
+```
