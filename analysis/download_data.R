@@ -1,4 +1,3 @@
-library(rentrez)
 library(reutils)
 library(seqinr)
 library(stringi)
@@ -16,8 +15,9 @@ curr_date <- gsub("-", "", as.character(Sys.Date()))
 
 coronavirus_taxid <- 2697049
 
-id_search <- entrez_search(db="nuccore", term=paste0('txid', coronavirus_taxid, '[Organism:noexp] AND ("20000"[SLEN] : "35000"[SLEN])'))$ids
-seq_str <- entrez_fetch(db="nuccore", id=id_search, rettype="fasta") %>% 
+id_search <- esearch(term=paste0('txid', coronavirus_taxid, '[Organism:noexp] AND ("20000"[SLEN] : "35000"[SLEN])'), db="nuccore")
+seq_str <- efetch(id_search, db="nuccore", rettype="fasta", retmode="text") %>% 
+  content() %>%
   strsplit("\n") %>%
   `[[`(1)
 seq_name_pos <- grep(">", seq_str)
