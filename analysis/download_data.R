@@ -31,7 +31,7 @@ gb <- efetch(id_search, db="nuccore", rettype="gb", retmode="text")$content
 gb_split <- strsplit(gb, "LOCUS       ")[[1]][-1]
 gb_line_split <- strsplit(gb_split, "\n")
 
-acc <- gsub("([A-Za-z0-9]+).*", "\\1", gb_split)
+acc <- gsub("([A-Za-z0-9_]+).*", "\\1", gb_split)
 
 gb_country <- gb_line_split %>% 
   mapply(grep, "/country", ., value=TRUE, SIMPLIFY=FALSE) %>%
