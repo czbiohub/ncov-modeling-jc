@@ -83,7 +83,7 @@ gisaid_metadata <- read_excel("../data/gisaid_cov2020_acknowledgement_table.xls"
   rename(acc=`Accession ID`, virus_name=`Virus name`, country=Location,
          collection_date=`Collection date`) %>%
   mutate(collection_date_month_only=str_count(collection_date, "-")==1) %>%
-  mutate(collection_date=parse_date(collection_date))
+  mutate(collection_date=parse_date(collection_date) %>% as.Date())
 
 
 write.table(gisaid_metadata, paste0("../data/gisaid_", curr_date, "_metadata.tsv"), sep="\t", row.names = FALSE, quote = FALSE)
